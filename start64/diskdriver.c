@@ -11,6 +11,10 @@ This is my own work*/
 #include "BoundedBuffer.h"
 #include "diskdevice.h" 
 
+#define DRIVER_QUEUE_CAPACITY 32
+#define DRIVER_REQ_POOL_SIZE  64
+#define DRIVER_VOUCHER_POOL_SIZE 64
+
 static DiskDevice *g_dd;
 static FreeSectorDescriptorStore *g_fsds;
 static BoundedBuffer *g_write_queue;
@@ -19,6 +23,9 @@ static BoundedBuffer *g_read_results;
 static pthread_t g_writer_tid, g_reader_tid;
 static pthread_mutex_t g_voucher_lock = PTHREAD_MUTEX_INITIALIZER;
 static BoundedBuffer *g_voucher_pool;
+
+static DriverRequest g_request_nodes[DRIVER_REQ_POOL_SIZE];
+static Voucher g_vouchers[DRIVER_VOUCHER_POOL_SIZE];
 
 
 struct voucher {
@@ -100,7 +107,7 @@ static void *reader_thread_func(void *arg) {
 }
 
 void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,FreeSectorDescriptorStore **fsds){
-    
+    int i;
     FreeSectorDescriptorStore *store;
     g_dd = dd;
     g_fsds=store;
@@ -109,12 +116,24 @@ void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,
     create_free_sector_descriptors(store, mem_start, mem_length);
     *fsds = store;
 
-    g_write_queue = createBB(16);
-    g_read_queue = createBB(16);
 
-    g_free_requests = createBB(16);
-    g_free_vouchers = createBB(16);
+    g_write_queue = createBB(DRIVER_QUEUE_CAPACITY);
+    g_read_queue = createBB(DRIVER_QUEUE_CAPACITY);
 
+    g_free_requests = createBB(DRIVER_REQ_POOL_SIZE);
+    g_free_vouchers = createBB(DRIVER_VOUCHER_POOL_SIZE);
+
+    for (i = 0; i < DRIVER_REQ_POOL_SIZE; i++) {
+        g_request_nodes[i].sd = NULL;
+        g_request_nodes[i].voucher = NULL;
+        g_request_nodes[i].is_read = 0;
+        blockingWriteBB(g_free_requests, &g_request_nodes[i]);
+    }
+
+    for (i = 0; i < DRIVER_VOUCHER_POOL_SIZE; i++) {
+        voucher_init(&g_vouchers[i]);
+        blockingWriteBB(g_free_vouchers, &g_vouchers[i]);
+    }
     pthread_create(&g_writer_tid, NULL, writer_thread_func, NULL); //still undefind
     pthread_create(&g_reader_tid, NULL, reader_thread_func, NULL);
 }
