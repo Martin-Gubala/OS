@@ -3,6 +3,8 @@ COMPSCI4011 – Assessed Exercise
 This is my own work*/
 
 #include <pthread.h>
+#include <stdio.h>
+#include <assert.h>
 #include <stdlib.h>
 #include "diskdriver.h"
 #include "freesectordescriptorstore.h"
@@ -19,9 +21,21 @@ static pthread_mutex_t g_voucher_lock = PTHREAD_MUTEX_INITIALIZER;
 static BoundedBuffer *g_voucher_pool;
 
 
-void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,FreeSectorDescriptorStore **fsds);
+void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,FreeSectorDescriptorStore **fsds){
+    
+    FreeSectorDescriptorStore *store;
+    g_dd = dd;
+    
+    store = create_fsds();
+    create_free_sector_descriptors(store, mem_start, mem_length);
+    *fsds = store;
 
+    g_write_queue = createBB(16);
+    g_read_queue = createBB(16);
 
+    pthread_create(&g_writer_tid, NULL, writer_thread_func, NULL); //still undefind
+    pthread_create(&g_reader_tid, NULL, reader_thread_func, NULL);
+}
 void blocking_write_sector(SectorDescriptor *sd, Voucher **v);
 int nonblocking_write_sector(SectorDescriptor *sd, Voucher **v);
 
