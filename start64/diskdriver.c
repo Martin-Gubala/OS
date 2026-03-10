@@ -20,6 +20,20 @@ static pthread_t g_writer_tid, g_reader_tid;
 static pthread_mutex_t g_voucher_lock = PTHREAD_MUTEX_INITIALIZER;
 static BoundedBuffer *g_voucher_pool;
 
+typedef struct {
+    SectorDescriptor *sd;
+    Voucher *voucher;
+    int is_read;
+} DriverRequest;
+
+static DriverRequest *acquire_request_blocking(void)
+{
+    DriverRequest *req = (DriverRequest *)blockingReadBB(g_free_requests);
+    req->sd = NULL;
+    req->voucher = NULL;
+    req->is_read = 0;
+    return req;
+}
 
 void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,FreeSectorDescriptorStore **fsds){
     
@@ -51,11 +65,78 @@ void blocking_write_sector(SectorDescriptor *sd, Voucher **v){
     *v = new_v;
     blockingWriteBB(g_write_queue, req);
 }
-int nonblocking_write_sector(SectorDescriptor *sd, Voucher **v);
+int nonblocking_write_sector(SectorDescriptor *sd, Voucher **v){
+    DriverRequest *req;
+    Voucher *new_v;
+
+    if (!acquire_request_nonblocking(&req)) {
+        *v = NULL;
+        return 0;
+    }
+
+    if (!acquire_voucher_nonblocking(&new_v)) {
+        release_request(req);
+        *v = NULL;
+        return 0;
+    }
+
+    req->sd = sd;
+    req->voucher = new_v;
+    req->is_read = 0;
+
+    if (!nonblockingWriteBB(g_write_queue, req)) {
+        release_request(req);
+        release_voucher(new_v);
+        *v = NULL;
+        return 0;
+    }
+
+    *v = new_v;
+    return 1;
+}
 
 
-void blocking_read_sector(SectorDescriptor *sd, Voucher **v);
-int nonblocking_read_sector(SectorDescriptor *sd, Voucher **v);
+void blocking_read_sector(SectorDescriptor *sd, Voucher **v){
+    DriverRequest *req = acquire_request_blocking();
+    Voucher *new_v = acquire_voucher_blocking();
+
+    req->sd = sd;
+    req->voucher = new_v;
+    req->is_read = 1;
+
+    *v = new_v;
+    blockingWriteBB(g_read_queue, req);
+    
+}
+int nonblocking_read_sector(SectorDescriptor *sd, Voucher **v){
+    DriverRequest *req;
+    Voucher *new_v;
+
+    if (!acquire_request_nonblocking(&req)) {
+        *v = NULL;
+        return 0;
+    }
+
+    if (!acquire_voucher_nonblocking(&new_v)) {
+        release_request(req);
+        *v = NULL;
+        return 0;
+    }
+
+    req->sd = sd;
+    req->voucher = new_v;
+    req->is_read = 1;
+
+    if (!nonblockingWriteBB(g_read_queue, req)) {
+        release_request(req);
+        release_voucher(new_v);
+        *v = NULL;
+        return 0;
+    }
+
+    *v = new_v;
+    return 1;
+}
 
 
 int redeem_voucher(Voucher *v, SectorDescriptor **sd);
