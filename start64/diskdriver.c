@@ -20,11 +20,29 @@ static pthread_t g_writer_tid, g_reader_tid;
 static pthread_mutex_t g_voucher_lock = PTHREAD_MUTEX_INITIALIZER;
 static BoundedBuffer *g_voucher_pool;
 
+
+struct voucher {
+    pthread_mutex_t lock;
+    pthread_cond_t done_cv;
+    int done;
+    int status;
+    SectorDescriptor *sd;
+};
+
 typedef struct {
     SectorDescriptor *sd;
     Voucher *voucher;
     int is_read;
 } DriverRequest;
+
+static DiskDevice *g_dd;
+static FreeSectorDescriptorStore *g_fsds;
+static BoundedBuffer *g_write_queue;
+static BoundedBuffer *g_read_queue;
+static BoundedBuffer *g_free_requests;
+static BoundedBuffer *g_free_vouchers;
+static pthread_t g_writer_tid, g_reader_tid;
+
 
 static DriverRequest *acquire_request_blocking(void)
 {
@@ -33,6 +51,52 @@ static DriverRequest *acquire_request_blocking(void)
     req->voucher = NULL;
     req->is_read = 0;
     return req;
+}
+
+static void release_request(DriverRequest *req)
+{
+    blockingWriteBB(g_free_requests, req);
+}
+
+static void release_voucher(Voucher *v)
+{
+    blockingWriteBB(g_free_vouchers, v);
+}
+
+
+static void *writer_thread_func(void *arg)
+{
+    (void)arg;
+
+    for (;;) {
+        DriverRequest *req = (DriverRequest *)blockingReadBB(g_write_queue);
+        int ok = write_sector(g_dd, req->sd);
+
+        /* write ownership returns to fsds after disk write attempt */
+        blocking_put_sd(g_fsds, req->sd);
+
+        /* for writes, redeem only needs success/failure */
+        voucher_complete(req->voucher, ok, NULL);
+
+        release_request(req);
+    }
+
+    return NULL;
+}
+
+static void *reader_thread_func(void *arg) {
+  (void)arg;
+
+    for (;;) {
+        DriverRequest *req = (DriverRequest *)blockingReadBB(g_read_queue);
+        int ok = read_sector(g_dd, req->sd);
+
+        voucher_complete(req->voucher, ok, req->sd);
+
+        release_request(req);
+    }
+
+    return NULL;
 }
 
 void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,FreeSectorDescriptorStore **fsds){
@@ -106,7 +170,7 @@ void blocking_read_sector(SectorDescriptor *sd, Voucher **v){
 
     *v = new_v;
     blockingWriteBB(g_read_queue, req);
-    
+
 }
 int nonblocking_read_sector(SectorDescriptor *sd, Voucher **v){
     DriverRequest *req;
@@ -139,4 +203,17 @@ int nonblocking_read_sector(SectorDescriptor *sd, Voucher **v){
 }
 
 
-int redeem_voucher(Voucher *v, SectorDescriptor **sd);
+int redeem_voucher(Voucher *v, SectorDescriptor **sd){
+    int status;
+    pthread_mutex_lock(&v->lock);
+    while (!v->done) {
+        pthread_cond_wait(&v->done_cv, &v->lock);
+    }
+
+    status = v->status;
+    *sd = v->sd;
+    pthread_mutex_unlock(&v->lock);
+
+    release_voucher(v);
+    return status;
+}
