@@ -1,4 +1,4 @@
-CFLAGS=-W -Wall
+CFLAGS=-W -Wall -no-pie
 OBJECTS=BoundedBuffer.o diagnostics.o freesectordescriptorstore.o \
         generic_queue.o sectordescriptor.o \
         sectordescriptorcreator.o testharness.o fakeapplications.o \
