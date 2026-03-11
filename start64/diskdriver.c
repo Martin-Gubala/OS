@@ -12,7 +12,6 @@ This is my own work*/
 #define DRIVER_REQ_POOL_SIZE 64
 #define DRIVER_VOUCHER_POOL_SIZE 64
 
-/* struct/typedef must come before any arrays that use these types */
 struct voucher
 {
     pthread_mutex_t lock;
@@ -41,7 +40,7 @@ static pthread_t g_reader_tid;
 static DriverRequest g_request_nodes[DRIVER_REQ_POOL_SIZE];
 static Voucher g_vouchers[DRIVER_VOUCHER_POOL_SIZE];
 
-static DriverRequest *acquire_request_blocking(void)
+static DriverRequest *request_blocking(void)
 {
     DriverRequest *req = (DriverRequest *)blockingReadBB(g_free_requests);
     req->sd = NULL;
@@ -50,7 +49,7 @@ static DriverRequest *acquire_request_blocking(void)
     return req;
 }
 
-static int acquire_request_nonblocking(DriverRequest **req_out)
+static int request_nonblocking(DriverRequest **req_out)
 {
     void *tmp = NULL;
 
@@ -67,7 +66,7 @@ static int acquire_request_nonblocking(DriverRequest **req_out)
     return 1;
 }
 
-static Voucher *acquire_voucher_blocking(void)
+static Voucher *voucher_blocking(void)
 {
     Voucher *v = (Voucher *)blockingReadBB(g_free_vouchers);
     v->done = 0;
@@ -76,7 +75,7 @@ static Voucher *acquire_voucher_blocking(void)
     return v;
 }
 
-static int acquire_voucher_nonblocking(Voucher **v_out)
+static int voucher_nonblocking(Voucher **v_out)
 {
     void *tmp = NULL;
 
@@ -112,10 +111,8 @@ static void *writer_thread_func(void *arg)
         DriverRequest *req = (DriverRequest *)blockingReadBB(g_write_queue);
         int status = write_sector(g_dd, req->sd);
 
-        /* write ownership returns to fsds after disk write attempt */
         blocking_put_sd(g_fsds, req->sd);
 
-        /* for writes, redeem only needs success/failure */
         pthread_mutex_lock(&req->voucher->lock);
         req->voucher->status = status;
         req->voucher->sd = NULL;
@@ -184,13 +181,13 @@ void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,
         g_vouchers[i].sd = NULL;
         blockingWriteBB(g_free_vouchers, &g_vouchers[i]);
     }
-    pthread_create(&g_writer_tid, NULL, writer_thread_func, NULL); // still undefind
+    pthread_create(&g_writer_tid, NULL, writer_thread_func, NULL);
     pthread_create(&g_reader_tid, NULL, reader_thread_func, NULL);
 }
 void blocking_write_sector(SectorDescriptor *sd, Voucher **v)
 {
-    DriverRequest *req = acquire_request_blocking();
-    Voucher *new_v = acquire_voucher_blocking();
+    DriverRequest *req = request_blocking();
+    Voucher *new_v = voucher_blocking();
 
     req->sd = sd;
     req->voucher = new_v;
@@ -204,13 +201,13 @@ int nonblocking_write_sector(SectorDescriptor *sd, Voucher **v)
     DriverRequest *req = NULL;
     Voucher *new_v;
 
-    if (!acquire_request_nonblocking(&req))
+    if (!request_nonblocking(&req))
     {
         *v = NULL;
         return 0;
     }
 
-    if (!acquire_voucher_nonblocking(&new_v))
+    if (!voucher_nonblocking(&new_v))
     {
         release_request(req);
         *v = NULL;
@@ -235,8 +232,8 @@ int nonblocking_write_sector(SectorDescriptor *sd, Voucher **v)
 
 void blocking_read_sector(SectorDescriptor *sd, Voucher **v)
 {
-    DriverRequest *req = acquire_request_blocking();
-    Voucher *new_v = acquire_voucher_blocking();
+    DriverRequest *req = request_blocking();
+    Voucher *new_v = voucher_blocking();
 
     req->sd = sd;
     req->voucher = new_v;
@@ -250,13 +247,13 @@ int nonblocking_read_sector(SectorDescriptor *sd, Voucher **v)
     DriverRequest *req;
     Voucher *new_v;
 
-    if (!acquire_request_nonblocking(&req))
+    if (!request_nonblocking(&req))
     {
         *v = NULL;
         return 0;
     }
 
-    if (!acquire_voucher_nonblocking(&new_v))
+    if (!voucher_nonblocking(&new_v))
     {
         release_request(req);
         *v = NULL;
