@@ -158,6 +158,7 @@ void init_disk_driver(DiskDevice *dd, void *mem_start, unsigned long mem_length,
     g_dd = dd;
     store = create_fsds();
     create_free_sector_descriptors(store, mem_start, mem_length);
+    g_fsds = store;
     *fsds = store;
 
     g_write_queue = createBB(DRIVER_QUEUE_CAPACITY);
