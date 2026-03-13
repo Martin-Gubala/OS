@@ -1,0 +1,9 @@
+2888769g
+
+The code is complete and fully functions as expected.
+Tested with Valgrind full and there where no definately lost Bytes.
+My code did run into an issue during compiling on the VM image provided on Moodle,
+the fix for thsi was to include "$(CFLAGS)" in line 8 to make it read as such:
+	cc $(CFLAGS) -o my_demo $(OBJECTS) -lpthread
+
+Without this modification the code failed to compile due to PIE error. 
